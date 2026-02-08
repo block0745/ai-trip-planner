@@ -1,6 +1,6 @@
 import streamlit as st
 from crewai import Agent, Task, Crew
-from crewai.llms import OpenAI
+from langchain_openai import ChatOpenAI
 from datetime import datetime, timedelta
 import os
 
@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # =========================
-# Initialize session state
+# Session state
 # =========================
 if "trip_plan" not in st.session_state:
     st.session_state.trip_plan = None
@@ -22,13 +22,16 @@ if "generating" not in st.session_state:
     st.session_state.generating = False
 
 # =========================
-# Create CrewAI Agents (OpenAI)
+# Create CrewAI Agents (OpenAI via LangChain)
 # =========================
 def create_agents(openai_api_key: str):
-    # OpenAI LLM (CrewAI)
-    openai_llm = OpenAI(
-        model="gpt-4o-mini",     # you can change to "gpt-4.1" if you want
-        api_key=openai_api_key
+    # Set API Key for OpenAI (LangChain reads this)
+    os.environ["OPENAI_API_KEY"] = openai_api_key
+
+    # Shared LLM for both agents
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.3
     )
 
     # City Information Agent
@@ -41,7 +44,7 @@ def create_agents(openai_api_key: str):
         ),
         verbose=True,
         allow_delegation=False,
-        llm=openai_llm
+        llm=llm
     )
 
     # Itinerary Planner Agent
@@ -54,7 +57,7 @@ def create_agents(openai_api_key: str):
         ),
         verbose=True,
         allow_delegation=False,
-        llm=openai_llm
+        llm=llm
     )
 
     return city_expert, itinerary_planner
@@ -76,7 +79,6 @@ def create_tasks(
     duration = (end_date - start_date).days + 1
     interests_str = ", ".join(interests)
 
-    # Task 1: Research destination
     research_task = Task(
         description=f"""Research {destination} and provide comprehensive information including:
 - Top 5 must-visit attractions related to: {interests_str}
@@ -92,7 +94,6 @@ Keep the response concise and practical.""",
         expected_output="Detailed city information with practical travel tips in a structured format"
     )
 
-    # Task 2: Create itinerary
     itinerary_task = Task(
         description=f"""Create a detailed {duration}-day itinerary for a trip from {origin} to {destination}.
 
@@ -119,7 +120,7 @@ Make it practical, enjoyable, and realistic!""",
     return [research_task, itinerary_task]
 
 # =========================
-# Generate trip plan using CrewAI (OpenAI)
+# Generate trip plan
 # =========================
 def generate_trip_plan(
     openai_api_key,
@@ -132,10 +133,8 @@ def generate_trip_plan(
     travel_style
 ):
     try:
-        # Create agents
         city_expert, itinerary_planner = create_agents(openai_api_key)
 
-        # Create tasks
         tasks = create_tasks(
             city_expert, itinerary_planner,
             origin, destination,
@@ -143,14 +142,12 @@ def generate_trip_plan(
             interests, budget, travel_style
         )
 
-        # Create crew
         crew = Crew(
             agents=[city_expert, itinerary_planner],
             tasks=tasks,
             verbose=True
         )
 
-        # Execute
         result = crew.kickoff()
         return str(result)
 
@@ -166,21 +163,18 @@ def generate_trip_plan(
 st.title("✈️ AI-Powered Trip Planner (OpenAI)")
 st.markdown("### Plan Your Perfect Trip with CrewAI & OpenAI")
 
-# =========================
 # Sidebar for API key
-# =========================
 with st.sidebar:
     st.header("⚙️ Configuration")
 
     st.markdown("**Get your OpenAI API key:**")
-    st.markdown("1. Go to the OpenAI platform")
+    st.markdown("1. Go to OpenAI platform")
     st.markdown("2. Create an API key")
     st.markdown("3. Paste it below")
 
-    # Optional: read from environment variable if present
-    env_key = os.getenv("OPENAI_API_KEY", "")
-
-    openai_api_key = env_key or st.text_input(
+    # Prefer env var/secrets if set, else allow manual input
+    default_key = os.getenv("OPENAI_API_KEY", "")
+    openai_api_key = default_key or st.text_input(
         "OpenAI API Key",
         type="password",
         help="Enter your OpenAI API key"
@@ -193,11 +187,9 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### About")
-    st.info("This app uses CrewAI agents powered by OpenAI to create personalized trip plans.")
+    st.info("This app uses CrewAI agents powered by OpenAI (via LangChain) to create personalized trip plans.")
 
-# =========================
 # Main content
-# =========================
 col1, col2 = st.columns(2)
 
 with col1:
@@ -248,9 +240,7 @@ with col2:
         horizontal=True
     )
 
-# =========================
 # Generate button
-# =========================
 st.markdown("---")
 col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
 
@@ -270,11 +260,17 @@ with col_btn2:
             with st.status("🤖 AI Agents are planning your trip...", expanded=True) as status:
                 st.write("🔍 City Expert is researching your destination...")
                 st.write("📝 Itinerary Planner is creating your schedule...")
-                st.write("⚡ Using OpenAI models...")
+                st.write("⚡ Using OpenAI model (gpt-4o-mini)...")
 
                 result = generate_trip_plan(
-                    openai_api_key, origin, destination, start_date, end_date,
-                    interests, budget, travel_style
+                    openai_api_key,
+                    origin,
+                    destination,
+                    start_date,
+                    end_date,
+                    interests,
+                    budget,
+                    travel_style
                 )
 
                 st.session_state.trip_plan = result
@@ -286,16 +282,13 @@ with col_btn2:
                     expanded=False
                 )
 
-# =========================
 # Display results
-# =========================
 if st.session_state.trip_plan:
     st.success("✅ Your personalized trip plan is ready!")
 
     st.markdown("### 📋 Trip Summary")
 
     summary_col1, summary_col2 = st.columns(2)
-
     with summary_col1:
         st.metric("Route", f"{origin} → {destination}")
         st.metric("Duration", f"{duration} days")
@@ -312,9 +305,9 @@ if st.session_state.trip_plan:
     with st.container():
         st.markdown(st.session_state.trip_plan)
 
-    col1, col2, col3 = st.columns([1, 1, 2])
+    col_a, col_b, col_c = st.columns([1, 1, 2])
 
-    with col1:
+    with col_a:
         st.download_button(
             label="📥 Download Plan",
             data=st.session_state.trip_plan,
@@ -323,19 +316,17 @@ if st.session_state.trip_plan:
             use_container_width=True
         )
 
-    with col2:
+    with col_b:
         if st.button("🔄 Generate New Plan", use_container_width=True):
             st.session_state.trip_plan = None
             st.rerun()
 
-# =========================
 # Footer
-# =========================
 st.markdown("---")
 st.markdown(
     """
 <div style='text-align: center; color: gray;'>
-    <p>⚡ Built with Streamlit & CrewAI | Powered by OpenAI</p>
+    <p>⚡ Built with Streamlit, CrewAI & OpenAI (LangChain) | Powered by AI Agents</p>
 </div>
 """,
     unsafe_allow_html=True
