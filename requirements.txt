@@ -1,4 +1,6 @@
 streamlit
-crewai
+crewai==0.41.1
 openai
+
+
 
